@@ -43,6 +43,15 @@
     "3": { "name": "Tech Panel",   "color": [ 60,  60, 180] },
     "4": { "name": "Energy Field", "color": [180, 180,  60] }
   },
+  "enemies": [
+    { "x": 10.5, "y": 10.5, "type": "imp" },
+    { "x": 14.5, "y": 13.5, "type": "imp" },
+    { "x": 6.5, "y": 15.5, "type": "imp" },
+    { "x": 19.5, "y": 18.5, "type": "imp" },
+    { "x": 24.5, "y": 20.5, "type": "imp" },
+    { "x": 15.5, "y": 26.5, "type": "imp" },
+    { "x": 25.5, "y": 27.5, "type": "imp" }
+  ],
   "pickups": [
     { "x": 5.5, "y": 6.5, "type": "health", "amount": 25 },
     { "x": 10.5, "y": 10.5, "type": "health", "amount": 25 },
