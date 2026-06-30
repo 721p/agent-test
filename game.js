@@ -4,6 +4,7 @@
  * Issue #7: Weapons & Shooting (pistol, shotgun, fire mechanics)
  * Issue #9: Health, Damage & Pickups (guarded — works with or without Health module)
  * Issue #10: Multiple Levels & Progression
+ * Issue #11: HUD, Menus & Game States
  *
  * Vanilla JS (ES6+), no build step, no frameworks.
  */
@@ -28,17 +29,22 @@
   const EXIT_TILE = 5; // Wall type 5 = exit door
   const MAX_LEVEL = LEVELS.length;
 
-  // ── Game State ───────────────────────────────────────────
+  // ── Game State (managed by Menu module) ──────────────────
   let currentLevelIndex = 0;
   let levelData = null;
   let levelMap = null;
   let mapWidth = 0, mapHeight = 0;
 
-  // Progression states: 'playing', 'transitioning', 'victory'
-  let gameState = 'playing';
+  // Legacy transition support (level-to-level fades)
   let transitionTimer = 0;
-  const TRANSITION_DURATION = 2.5; // seconds: fade out + show text + fade in
+  const TRANSITION_DURATION = 2.5;
   let pendingLevelIndex = 0;
+  let isTransitioning = false;
+
+  // Stats tracking
+  let totalKillCount = 0;
+  let prevEnemyCount = 0;
+  let gameStartTime = 0;
 
   // Persisted progress
   let maxUnlockedLevel = 0;
@@ -68,13 +74,40 @@
   ];
 
   const player = { x: 8.0, y: 8.0, angle: 0 };
-  const MOVE_SPEED = 3.5, STRAFE_SPEED = 3.0, TURN_SPEED = 2.5, MOUSE_SENS = 0.0025, COLLISION_MARGIN = 0.25;
+  const MOVE_SPEED = 3.5, STRAFE_SPEED = 3.0, TURN_SPEED = 2.5, COLLISION_MARGIN = 0.25;
+  let MOUSE_SENS = 0.0025;
   const weapons = (typeof Weapons !== 'undefined') ? Weapons.create() : null;
   const playerHealth = (typeof Health !== 'undefined') ? Health.createPlayer(weapons) : null;
   const enemySystem = (typeof Enemies !== 'undefined') ? Enemies.create() : null;
   let pickups = [];
   const keys = {};
   let pointerLocked = false, mouseAccumX = 0;
+
+  // ── Menu System Initialization ───────────────────────────
+  if (typeof Menu !== 'undefined') {
+    Menu.init(ctx, canvas);
+    Menu.setCallbacks({
+      onNewGame: startNewGame,
+      onResume: resumeGame,
+      onQuitToMenu: quitToMenu,
+      onRestart: startNewGame,
+    });
+    applySettings();
+  }
+
+  function applySettings() {
+    if (typeof Menu === 'undefined') return;
+    const s = Menu.getSettings();
+    MOUSE_SENS = 0.0025 * s.mouseSens;
+    if (typeof raycaster !== 'undefined' && raycaster.setFov) {
+      raycaster.setFov(s.fov * Math.PI / 180);
+    }
+  }
+
+  function gameState() {
+    if (typeof Menu !== 'undefined') return Menu.getState();
+    return 'playing';
+  }
 
   // ── Level Loading ──────────────────────────────────────
   async function loadLevel(levelIndex) {
@@ -129,11 +162,72 @@
       }
     }
 
+    // Track enemy count for kill stats
+    if (enemySystem && typeof Enemies !== 'undefined') {
+      prevEnemyCount = Enemies.getAliveCount(enemySystem);
+    }
+
     // Update wall colors in raycaster
     if (typeof raycaster !== 'undefined' && levelData && levelData.wallTypes) {
       if (typeof raycaster.setWallColors === 'function') {
         raycaster.setWallColors(levelData.wallTypes);
       }
+    }
+  }
+
+  // ── Game state transitions ───────────────────────────────
+  function startNewGame() {
+    currentLevelIndex = 0;
+    totalKillCount = 0;
+    gameStartTime = performance.now() / 1000;
+    isTransitioning = false;
+    performLevelSwitch(0);
+  }
+
+  function resumeGame() {
+    if (typeof Menu !== 'undefined') Menu.setState(Menu.STATE.PLAYING);
+    hintEl.style.display = pointerLocked ? 'none' : 'block';
+    lastTime = performance.now();
+  }
+
+  function quitToMenu() {
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
+    isTransitioning = false;
+    if (typeof Menu !== 'undefined') Menu.setState(Menu.STATE.MENU);
+    hintEl.style.display = 'none';
+  }
+
+  function showDeathScreen() {
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
+    const timeSurvived = performance.now() / 1000 - gameStartTime;
+    if (typeof Menu !== 'undefined') {
+      Menu.setDeathStats({
+        enemiesKilled: totalKillCount,
+        timeSurvived: timeSurvived,
+        level: currentLevelIndex + 1,
+      });
+      Menu.setState(Menu.STATE.DEAD);
+    }
+  }
+
+  function showVictoryScreen() {
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
+    const totalTime = performance.now() / 1000 - gameStartTime;
+    if (typeof Menu !== 'undefined') {
+      Menu.setVictoryStats({
+        enemiesKilled: totalKillCount,
+        totalTime: totalTime,
+      });
+      Menu.setState(Menu.STATE.VICTORY);
+    }
+  }
+
+  function updateKillStats() {
+    if (!enemySystem || typeof Enemies === 'undefined') return;
+    const alive = Enemies.getAliveCount(enemySystem);
+    if (alive < prevEnemyCount) {
+      totalKillCount += (prevEnemyCount - alive);
+      prevEnemyCount = alive;
     }
   }
 
@@ -174,22 +268,15 @@
 
   // ── Level Progression ───────────────────────────────────
   function startLevelTransition(nextIndex) {
-    gameState = 'transitioning';
+    isTransitioning = true;
     transitionTimer = 0;
     pendingLevelIndex = nextIndex;
-    if (document.pointerLockElement === canvas) document.exitPointerLock();
-  }
-
-  function showVictoryScreen() {
-    gameState = 'victory';
-    transitionTimer = 0;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
   }
 
   async function performLevelSwitch(index) {
     currentLevelIndex = index;
     await loadLevel(index);
-    // Reset player health and weapons for new level
     if (playerHealth && typeof Health !== 'undefined') {
       Health.reset(playerHealth, weapons);
     }
@@ -201,9 +288,11 @@
       weapons.muzzleFlash = 0;
       weapons.recoilOffset = 0;
     }
-    gameState = 'playing';
+    isTransitioning = false;
     transitionTimer = 0;
+    if (typeof Menu !== 'undefined') Menu.setState(Menu.STATE.PLAYING);
     hintEl.style.display = 'block';
+    applySettings();
   }
 
   // ── Exit Tile Detection ─────────────────────────────────
@@ -233,6 +322,15 @@
 
   // ── Input ──────────────────────────────────────────────
   window.addEventListener('keydown', (e) => {
+    const state = gameState();
+
+    // Menu/pause/death/victory key handling
+    if (typeof Menu !== 'undefined' && state !== 'playing') {
+      Menu.handleKey(e.code);
+      e.preventDefault();
+      return;
+    }
+
     keys[e.code] = true;
     if (weapons && e.code === 'Digit1') Weapons.switchTo(weapons, 1);
     if (weapons && e.code === 'Digit2') Weapons.switchTo(weapons, 2);
@@ -241,49 +339,61 @@
     // Toggle mute with M key
     if (e.code === 'KeyM') toggleMute();
 
-    // Restart on death
-    if (playerHealth && playerHealth.dead && (e.code === 'Space' || e.code === 'Enter')) {
-      resetGame();
-    }
-
-    // Victory screen: press space/enter to restart from level 1
-    if (gameState === 'victory' && (e.code === 'Space' || e.code === 'Enter')) {
-      currentLevelIndex = 0;
-      performLevelSwitch(0);
+    // ESC toggles pause
+    if (e.code === 'Escape' && state === 'playing' && !isTransitioning) {
+      if (document.pointerLockElement === canvas) document.exitPointerLock();
+      if (typeof Menu !== 'undefined') Menu.setState(Menu.STATE.PAUSED);
+      hintEl.style.display = 'none';
+      return;
     }
   });
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-  canvas.addEventListener('click', () => {
-    initSound(); // Initialize audio on first user gesture (autoplay policy)
-    if (gameState === 'victory') {
-      currentLevelIndex = 0;
-      performLevelSwitch(0);
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    if (typeof Menu !== 'undefined') Menu.trackMouse(e.clientX - rect.left, e.clientY - rect.top);
+    if (pointerLocked) mouseAccumX += e.movementX;
+  });
+
+  canvas.addEventListener('click', (e) => {
+    initSound();
+    const state = gameState();
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    if (typeof Menu !== 'undefined' && state !== 'playing') {
+      Menu.setMouseDown(true);
+      Menu.handleClick(mx, my);
       return;
     }
-    if (gameState === 'transitioning') return;
-    if (playerHealth && playerHealth.dead) {
-      resetGame();
-      return;
-    }
+    if (isTransitioning) return;
+    if (playerHealth && playerHealth.dead) return;
     if (!pointerLocked) canvas.requestPointerLock();
     else if (weapons) handleFire();
   });
+
+  canvas.addEventListener('mouseup', () => {
+    if (typeof Menu !== 'undefined') Menu.setMouseDown(false);
+  });
+
   document.addEventListener('pointerlockchange', () => {
     pointerLocked = (document.pointerLockElement === canvas);
-    hintEl.style.display = (pointerLocked || gameState !== 'playing') ? 'none' : 'block';
+    const state = gameState();
+    hintEl.style.display = (pointerLocked || state !== 'playing') ? 'none' : 'block';
   });
   document.addEventListener('mousemove', (e) => { if (pointerLocked) mouseAccumX += e.movementX; });
   canvas.addEventListener('mousedown', (e) => {
-    initSound(); // Ensure audio is ready on any click
-    if (gameState !== 'playing') return;
-    if (playerHealth && playerHealth.dead) { resetGame(); return; }
+    initSound();
+    const state = gameState();
+    if (state !== 'playing' || isTransitioning) return;
+    if (playerHealth && playerHealth.dead) return;
     if (pointerLocked && e.button === 0 && weapons) handleFire();
   });
 
   function handleFire() {
     if (playerHealth && playerHealth.dead) return;
-    if (gameState !== 'playing') return;
+    if (gameState() !== 'playing') return;
+    if (isTransitioning) return;
     const result = Weapons.tryFire(weapons);
     if (!result) {
       // No ammo — dry fire click
@@ -298,7 +408,7 @@
     let didHit = false;
     for (let p = 0; p < result.pellets; p++) {
       const offset = result.spread > 0 ? (Math.random()-0.5)*2*result.spread : 0;
-      const hit = Weapons.raycastHit(player, player.angle + offset, levelMap, 20, enemySystem);
+      const hit = Weapons.raycastHit(player, player.angle + offset, levelMap);
       if (hit && enemySystem) {
         const hitSomething = Enemies.tryHit(enemySystem, hit.x, hit.y, result.damage);
         if (hitSomething) {
@@ -339,7 +449,8 @@
 
   function updatePlayer(delta) {
     if (playerHealth && playerHealth.dead) return;
-    if (gameState !== 'playing') return;
+    if (gameState() !== 'playing') return;
+    if (isTransitioning) return;
 
     const cos = Math.cos(player.angle), sin = Math.sin(player.angle);
     let dx = 0, dy = 0;
@@ -434,6 +545,8 @@
 
   // ── HUD ────────────────────────────────────────────────
   function drawHud() {
+    const state = gameState();
+    if (state !== 'playing' && state !== 'paused' && !isTransitioning) return;
     ctx.save();
     ctx.font = '14px monospace'; ctx.fillStyle = '#00FF00'; ctx.textBaseline = 'top';
     ctx.fillText('FPS: '+displayFps, 10, 10);
@@ -445,11 +558,15 @@
     ctx.fillText('Level ' + (currentLevelIndex + 1) + '/' + MAX_LEVEL + ' — ' + levelName, canvas.width / 2, 10);
     ctx.textAlign = 'left';
 
-    if (!pointerLocked && !(playerHealth && playerHealth.dead) && gameState === 'playing') {
+    // Kills counter
+    ctx.font = '14px monospace'; ctx.fillStyle = '#FF6644'; ctx.textAlign = 'center';
+    ctx.fillText('Kills: ' + totalKillCount, canvas.width / 2, 32);
+
+    if (!pointerLocked && !(playerHealth && playerHealth.dead) && state === 'playing') {
       ctx.fillStyle='#FFAA00'; ctx.fillText('Click canvas to capture mouse', 10, 46);
     }
-    else if (!(playerHealth && playerHealth.dead) && gameState === 'playing') {
-      ctx.fillStyle='#888'; ctx.fillText('Mouse captured (ESC) · Click to fire · 1/2 switch weapons · M mute', 10, 46);
+    else if (!(playerHealth && playerHealth.dead) && state === 'playing') {
+      ctx.fillStyle='#888'; ctx.fillText('Mouse captured (ESC to pause) · Click to fire · 1/2 weapons · M mute', 10, 46);
     }
     if (weapons) {
       const info = Weapons.getAmmoInfo(weapons);
@@ -524,41 +641,16 @@
     ctx.restore();
   }
 
-  // ── Victory Screen ─────────────────────────────────────
-  function drawVictoryScreen() {
-    const t = transitionTimer;
-
-    ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const pulse = 0.7 + Math.sin(t * 3) * 0.3;
-    ctx.fillStyle = 'rgba(255, 215, 0, ' + pulse + ')';
-    ctx.font = 'bold 64px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('VICTORY!', canvas.width / 2, canvas.height / 2 - 80);
-
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '24px monospace';
-    ctx.fillText('You have cleared all ' + MAX_LEVEL + ' levels', canvas.width / 2, canvas.height / 2 - 20);
-    ctx.fillText('The demonic invasion has been stopped.', canvas.width / 2, canvas.height / 2 + 15);
-
-    ctx.fillStyle = '#00FF00';
-    ctx.font = '18px monospace';
-    ctx.fillText('Press SPACE or ENTER to play again', canvas.width / 2, canvas.height / 2 + 70);
-    ctx.fillText('or click anywhere on the screen', canvas.width / 2, canvas.height / 2 + 100);
-
-    ctx.restore();
-  }
-
   // ── Game Loop ──────────────────────────────────────────
   let lastTime = performance.now();
   function gameLoop(now) {
     const delta = Math.min((now-lastTime)/1000, 0.1);
     lastTime = now;
+    const state = gameState();
 
-    if (gameState === 'playing') {
+    if (typeof Menu !== 'undefined') Menu.update(delta);
+
+    if (state === 'playing' && !isTransitioning) {
       // Skip updates when tab is hidden (performance + avoid huge delta)
       if (tabHidden) {
         // Still render, just don't update
@@ -640,66 +732,100 @@
             if (nearest < 10) Sound.playGrowl();
           }
         }
+
+        // Track kills
+        updateKillStats();
+
+        // Check for death
+        if (playerHealth && playerHealth.dead) {
+          showDeathScreen();
+        }
       }
-      } // end if (!tabHidden)
-    } else if (gameState === 'transitioning') {
+      } // end else (!tabHidden)
+    } else if (isTransitioning) {
       transitionTimer += delta;
       if (transitionTimer >= TRANSITION_DURATION) {
         performLevelSwitch(pendingLevelIndex);
       }
-    } else if (gameState === 'victory') {
-      transitionTimer += delta;
     }
 
     // ── Render ─────────────────────────────────────
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    if (gameState === 'playing' || gameState === 'transitioning') {
+    if (state === 'menu') {
+      if (typeof Menu !== 'undefined') Menu.render();
+      else {
+        ctx.fillStyle = '#FF4422'; ctx.font = 'bold 48px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('DOOM — Browser Edition', canvas.width/2, canvas.height/2);
+      }
+    } else if (state === 'playing' || state === 'paused' || isTransitioning) {
       if (typeof raycaster !== 'undefined') {
         const strips = raycaster.castRays(player, levelMap, canvas.width, canvas.height);
         raycaster.renderWalls(ctx, strips, canvas.width, canvas.height);
       }
 
       // Draw pickups in 3D view
-      if (typeof Health !== 'undefined' && pickups.length > 0) {
+      if (typeof Health !== 'undefined' && pickups.length > 0 && !isTransitioning) {
         Health.drawPickups(ctx, pickups, player, canvas.width, canvas.height);
       }
 
       // Draw enemies in 3D view
-      if (enemySystem && typeof Enemies !== 'undefined') {
+      if (enemySystem && typeof Enemies !== 'undefined' && !isTransitioning) {
         Enemies.render(enemySystem, ctx, player, levelMap, canvas.width, canvas.height);
       }
 
-      if (weapons && !(playerHealth && playerHealth.dead) && gameState === 'playing') {
+      if (weapons && !(playerHealth && playerHealth.dead) && state === 'playing') {
         Weapons.drawSprite(ctx, weapons, canvas.width, canvas.height);
         Weapons.drawMuzzleFlash(ctx, weapons, canvas.width, canvas.height);
       }
 
-      drawMiniMap();
-      updateFps(delta);
-      drawHud();
+      if (state === 'playing' || state === 'paused') {
+        drawMiniMap();
+        updateFps(delta);
+        drawHud();
 
       // Screen flash effects
       if (playerHealth && typeof Health !== 'undefined') {
         Health.drawScreenFlash(ctx, playerHealth, canvas.width, canvas.height);
       }
 
-      // Death screen
-      if (playerHealth && playerHealth.dead && typeof Health !== 'undefined') {
-        Health.drawDeathScreen(ctx, canvas.width, canvas.height);
-      }
-
       // Transition overlay
-      if (gameState === 'transitioning') {
+      if (isTransitioning) {
         drawTransitionScreen();
       }
-    } else if (gameState === 'victory') {
+
+      // Pause overlay
+      if (state === 'paused' && typeof Menu !== 'undefined') {
+        Menu.render();
+      }
+    } else if (state === 'dead') {
+      if (typeof raycaster !== 'undefined') {
+        const strips = raycaster.castRays(player, levelMap, canvas.width, canvas.height);
+        raycaster.renderWalls(ctx, strips, canvas.width, canvas.height);
+      }
+      if (typeof Menu !== 'undefined') Menu.render();
+    } else if (state === 'victory') {
       // Render the 3D view faintly behind victory screen
       if (typeof raycaster !== 'undefined') {
         const strips = raycaster.castRays(player, levelMap, canvas.width, canvas.height);
         raycaster.renderWalls(ctx, strips, canvas.width, canvas.height);
       }
-      drawVictoryScreen();
+      if (typeof Menu !== 'undefined') Menu.render();
+    }
+    } // end else if (state === "playing"...) 
+
+    // Update hint text
+    if (typeof Menu !== 'undefined' && state !== 'playing') {
+      const hint = Menu.getMenuClickHint();
+      hintEl.textContent = hint;
+      hintEl.style.display = hint ? 'block' : 'none';
+    } else if (state === 'playing' && !isTransitioning) {
+      if (pointerLocked) {
+        hintEl.style.display = 'none';
+      } else {
+        hintEl.textContent = 'Click to capture mouse · ESC to pause · Click to fire · 1/2 switch weapons';
+        hintEl.style.display = 'block';
+      }
     }
 
     requestAnimationFrame(gameLoop);
@@ -753,9 +879,9 @@
       }
     };
     window.gameGetLevel = function() { return currentLevelIndex; };
-    window.gameGetGameState = function() { return gameState; };
+    window.gameGetGameState = function() { return gameState(); };
     window.gameSelectLevel = function(index) {
-      if (index >= 0 && index <= maxUnlockedLevel && gameState === 'playing') {
+      if (index >= 0 && index <= maxUnlockedLevel && gameState() === 'playing') {
         currentLevelIndex = index;
         performLevelSwitch(index);
       }
@@ -764,8 +890,14 @@
   }
 
   async function init() {
-    await loadLevel(currentLevelIndex);
-    hintEl.style.display = 'block';
+    if (typeof Menu !== 'undefined') {
+      Menu.setState(Menu.STATE.MENU);
+      hintEl.textContent = 'Click NEW GAME to start · Click SETTINGS to configure';
+      hintEl.style.display = 'block';
+    } else {
+      await loadLevel(currentLevelIndex);
+      hintEl.style.display = 'block';
+    }
     requestAnimationFrame(gameLoop);
   }
 
