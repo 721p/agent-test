@@ -1,12 +1,13 @@
 /**
  * game.js — DOOM Browser Edition
- * Issue #4: Level System & Map Design
+ * Issue #3: Player Movement & Controls (WASD + Mouse Look)
  *
  * Features:
- *   - Loads levels from JSON via level.js module
- *   - WASD movement + mouse look (pointer lock)
- *   - Collision detection against loaded level grid
- *   - Mini-map overlay (top-down view) in screen corner
+ *   - WASD movement (forward/backward + strafe)
+ *   - Arrow keys or mouse for rotation
+ *   - Pointer lock for mouse look (click canvas to capture, ESC to release)
+ *   - Collision detection prevents walking through walls
+ *   - Smooth movement with delta-time
  *   - Integrates raycaster.js DDA engine for 3D rendering
  *
  * Vanilla JS (ES6+), no build step, no frameworks.
@@ -28,37 +29,54 @@
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
 
-  // ── Level & Player State ──────────────────────────────────────
-  let level = null;        // Level instance (from level.js)
-  let levelMap = null;     // shortcut to level.grid
-  let mapWidth = 0;
-  let mapHeight = 0;
+  // ── Level Map ─────────────────────────────────────────────────
+  const levelMap = (typeof raycaster !== 'undefined' && raycaster.TEST_LEVEL)
+    ? raycaster.TEST_LEVEL
+    : [
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,0,2,2,2,0,0,0,0,0,0,3,3,3,0,1],
+        [1,0,2,0,0,0,0,0,0,0,0,3,0,0,0,1],
+        [1,0,2,0,0,0,0,4,4,0,0,3,0,0,0,1],
+        [1,0,0,0,0,0,0,4,4,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,4,4,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,4,4,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      ];
 
+  const mapHeight = levelMap.length;
+  const mapWidth = levelMap[0].length;
+
+  // ── Player State ──────────────────────────────────────────────
   const player = {
-    x: 0,
-    y: 0,
-    angle: 0,
+    x: 8.0,           // grid position (center of map)
+    y: 8.0,
+    angle: 0,         // facing east (radians)
   };
 
   // ── Movement Constants ───────────────────────────────────────
-  const MOVE_SPEED       = 3.5;  // grid units per second
-  const STRAFE_SPEED     = 3.0;  // grid units per second
-  const TURN_SPEED       = 2.5;  // radians per second (keyboard)
-  const MOUSE_SENS       = 0.0025; // radians per pixel
-  const COLLISION_MARGIN = 0.25;
-
-  // ── Mini-map Constants ───────────────────────────────────────
-  const MINIMAP_SCALE = 4;     // pixels per grid cell
-  const MINIMAP_PAD   = 10;    // padding from screen edge
-  const MINIMAP_ALPHA = 0.75;  // overlay transparency
+  const MOVE_SPEED   = 3.5;  // grid units per second
+  const STRAFE_SPEED = 3.0;  // grid units per second
+  const TURN_SPEED   = 2.5;  // radians per second (keyboard)
+  const MOUSE_SENS   = 0.0025; // radians per pixel of mouse movement
+  const COLLISION_MARGIN = 0.25; // wall buffer for collision
 
   // ── Input State ───────────────────────────────────────────────
   const keys = {};
   let pointerLocked = false;
-  let mouseAccumX = 0;
+  let mouseAccumX = 0; // accumulated mouse movement since last frame
 
+  // Keyboard listeners
   window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
+    // Prevent page scroll on arrow keys / space
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
       e.preventDefault();
     }
@@ -67,15 +85,21 @@
     keys[e.code] = false;
   });
 
+  // Pointer lock setup
   canvas.addEventListener('click', () => {
     canvas.requestPointerLock();
   });
 
   document.addEventListener('pointerlockchange', () => {
     pointerLocked = (document.pointerLockElement === canvas);
-    hintEl.style.display = pointerLocked ? 'none' : 'block';
+    if (pointerLocked) {
+      hintEl.style.display = 'none';
+    } else {
+      hintEl.style.display = 'block';
+    }
   });
 
+  // Mouse look — accumulate movement, apply in update
   document.addEventListener('mousemove', (e) => {
     if (pointerLocked) {
       mouseAccumX += e.movementX;
@@ -83,16 +107,27 @@
   });
 
   // ── Collision Detection ───────────────────────────────────────
+  /**
+   * Check if a given (x, y) position is valid (not inside a wall).
+   * Uses a margin buffer so the player can't clip into walls.
+   *
+   * @param {number} x - proposed x position
+   * @param {number} y - proposed y position
+   * @returns {boolean} true if the position is walkable
+   */
   function isWalkable(x, y) {
+    // Check the four corners around the player position with margin
     const minX = Math.floor(x - COLLISION_MARGIN);
     const maxX = Math.floor(x + COLLISION_MARGIN);
     const minY = Math.floor(y - COLLISION_MARGIN);
     const maxY = Math.floor(y + COLLISION_MARGIN);
 
+    // Out of bounds
     if (minX < 0 || maxX >= mapWidth || minY < 0 || maxY >= mapHeight) {
       return false;
     }
 
+    // Check all cells the player's bounding box overlaps
     for (let cy = minY; cy <= maxY; cy++) {
       for (let cx = minX; cx <= maxX; cx++) {
         if (levelMap[cy][cx] > 0) {
@@ -103,136 +138,98 @@
     return true;
   }
 
+  /**
+   * Attempt to move the player to (newX, newY) with per-axis collision.
+   * Allows sliding along walls by checking each axis independently.
+   *
+   * @param {number} newX - proposed x
+   * @param {number} newY - proposed y
+   */
   function tryMove(newX, newY) {
+    // Try X axis first (slide along walls)
     if (isWalkable(newX, player.y)) {
       player.x = newX;
     }
+    // Then try Y axis
     if (isWalkable(player.x, newY)) {
       player.y = newY;
     }
   }
 
   // ── Update Player ─────────────────────────────────────────────
+  /**
+   * Update player position and rotation based on input.
+   * @param {number} delta — seconds since last frame
+   */
   function updatePlayer(delta) {
     const cos = Math.cos(player.angle);
     const sin = Math.sin(player.angle);
 
+    // Movement vector
     let dx = 0, dy = 0;
 
-    if (keys['KeyW'] || keys['ArrowUp'])    { dx += cos; dy += sin; }
-    if (keys['KeyS'] || keys['ArrowDown'])   { dx -= cos; dy -= sin; }
-    if (keys['KeyA'])                         { dx += sin; dy -= cos; }
-    if (keys['KeyD'])                         { dx -= sin; dy += cos; }
+    // W / ArrowUp — move forward
+    if (keys['KeyW'] || keys['ArrowUp']) {
+      dx += cos;
+      dy += sin;
+    }
+    // S / ArrowDown — move backward
+    if (keys['KeyS'] || keys['ArrowDown']) {
+      dx -= cos;
+      dy -= sin;
+    }
+    // A — strafe left
+    if (keys['KeyA']) {
+      dx += sin;
+      dy -= cos;
+    }
+    // D — strafe right
+    if (keys['KeyD']) {
+      dx -= sin;
+      dy += cos;
+    }
 
+    // Normalize diagonal movement so it's not faster
     const len = Math.hypot(dx, dy);
     if (len > 0) {
       dx /= len;
       dy /= len;
 
+      // Determine speed (forward/backward use MOVE_SPEED, strafe uses STRAFE_SPEED)
+      // For simplicity, blend: if pure strafe, use strafe speed
       let speed = MOVE_SPEED;
       const forwardComponent = Math.abs(dx * cos + dy * sin);
-      const strafeComponent   = Math.abs(dx * -sin + dy * cos);
+      const strafeComponent = Math.abs(dx * -sin + dy * cos);
+
       if (strafeComponent > forwardComponent) {
         speed = STRAFE_SPEED;
       }
 
-      tryMove(player.x + dx * speed * delta, player.y + dy * speed * delta);
+      const newX = player.x + dx * speed * delta;
+      const newY = player.y + dy * speed * delta;
+      tryMove(newX, newY);
     }
 
-    if (keys['ArrowLeft']  || keys['KeyQ']) { player.angle -= TURN_SPEED * delta; }
-    if (keys['ArrowRight'] || keys['KeyE']) { player.angle += TURN_SPEED * delta; }
+    // Rotation — keyboard (arrow keys / Q / E)
+    if (keys['ArrowLeft'] || keys['KeyQ']) {
+      player.angle -= TURN_SPEED * delta;
+    }
+    if (keys['ArrowRight'] || keys['KeyE']) {
+      player.angle += TURN_SPEED * delta;
+    }
 
+    // Rotation — mouse (pointer lock)
     if (pointerLocked && mouseAccumX !== 0) {
       player.angle += mouseAccumX * MOUSE_SENS;
       mouseAccumX = 0;
     }
 
-    if (player.angle < 0)        player.angle += Math.PI * 2;
+    // Normalize angle to [0, 2π)
+    if (player.angle < 0) player.angle += Math.PI * 2;
     if (player.angle >= Math.PI * 2) player.angle -= Math.PI * 2;
   }
 
-  // ── Mini-map Rendering ────────────────────────────────────────
-  /**
-   * Draw a top-down mini-map in the top-left corner of the screen.
-   * Shows walls color-coded by type, the player as a dot, and a
-   * short FOV direction indicator.
-   */
-  function drawMiniMap() {
-    const mmW = mapWidth  * MINIMAP_SCALE;
-    const mmH = mapHeight * MINIMAP_SCALE;
-    const ox  = MINIMAP_PAD;  // origin x (top-left)
-    const oy  = MINIMAP_PAD;  // origin y
-
-    ctx.save();
-    ctx.globalAlpha = MINIMAP_ALPHA;
-
-    // Background panel
-    ctx.fillStyle = '#000';
-    ctx.fillRect(ox - 2, oy - 2, mmW + 4, mmH + 4);
-
-    // Draw cells
-    for (let y = 0; y < mapHeight; y++) {
-      for (let x = 0; x < mapWidth; x++) {
-        const cell = levelMap[y][x];
-        if (cell > 0) {
-          const color = level.getWallColor(cell);
-          ctx.fillStyle = 'rgb(' + color[0] + ',' + color[1] + ',' + color[2] + ')';
-        } else {
-          ctx.fillStyle = '#222';
-        }
-        ctx.fillRect(
-          ox + x * MINIMAP_SCALE,
-          oy + y * MINIMAP_SCALE,
-          MINIMAP_SCALE,
-          MINIMAP_SCALE
-        );
-      }
-    }
-
-    // Player position dot
-    const px = ox + player.x * MINIMAP_SCALE;
-    const py = oy + player.y * MINIMAP_SCALE;
-    ctx.fillStyle = '#0F0';
-    ctx.beginPath();
-    ctx.arc(px, py, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // FOV direction line
-    const fovLen = 12;
-    ctx.strokeStyle = '#0F0';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(
-      px + Math.cos(player.angle) * fovLen,
-      py + Math.sin(player.angle) * fovLen
-    );
-    ctx.stroke();
-
-    // Left FOV boundary
-    const halfFov = (typeof raycaster !== 'undefined' ? raycaster.FOV : Math.PI / 3) / 2;
-    ctx.strokeStyle = 'rgba(0,255,0,0.4)';
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(
-      px + Math.cos(player.angle - halfFov) * fovLen,
-      py + Math.sin(player.angle - halfFov) * fovLen
-    );
-    ctx.stroke();
-
-    // Right FOV boundary
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(
-      px + Math.cos(player.angle + halfFov) * fovLen,
-      py + Math.sin(player.angle + halfFov) * fovLen
-    );
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
-  // ── FPS Counter & HUD ─────────────────────────────────────────
+  // ── FPS Counter ───────────────────────────────────────────────
   let frameCount = 0;
   let fpsAccumulator = 0;
   let displayFps = 0;
@@ -248,26 +245,19 @@
   }
 
   function drawHud() {
-    const hudY = MINIMAP_PAD + mapHeight * MINIMAP_SCALE + 6;
     ctx.save();
     ctx.font = '14px monospace';
     ctx.fillStyle = '#00FF00';
     ctx.textBaseline = 'top';
-    ctx.fillText('FPS: ' + displayFps, 10, hudY);
-    ctx.fillText(
-      'Pos: (' + player.x.toFixed(2) + ', ' + player.y.toFixed(2) + ')  Angle: ' + (player.angle * 180 / Math.PI).toFixed(0) + '\u00b0',
-      10, hudY + 18
-    );
-    if (level) {
-      ctx.fillStyle = '#88CCFF';
-      ctx.fillText('Level: ' + level.name, 10, hudY + 36);
-    }
+    ctx.fillText(`FPS: ${displayFps}`, 10, 10);
+    ctx.fillText(`Pos: (${player.x.toFixed(2)}, ${player.y.toFixed(2)})  Angle: ${(player.angle * 180 / Math.PI).toFixed(0)}°`, 10, 28);
+
     if (!pointerLocked) {
       ctx.fillStyle = '#FFAA00';
-      ctx.fillText('Click canvas to capture mouse', 10, hudY + 54);
+      ctx.fillText('Click canvas to capture mouse', 10, 46);
     } else {
       ctx.fillStyle = '#888';
-      ctx.fillText('Mouse captured (ESC to release)', 10, hudY + 54);
+      ctx.fillText('Mouse captured (ESC to release)', 10, 46);
     }
     ctx.restore();
   }
@@ -276,77 +266,31 @@
   let lastTime = performance.now();
 
   function gameLoop(now) {
-    const delta = Math.min((now - lastTime) / 1000, 0.1);
+    const delta = Math.min((now - lastTime) / 1000, 0.1); // cap delta to avoid jumps
     lastTime = now;
 
+    // Update player
     updatePlayer(delta);
 
-    // Clear screen
+    // Clear the screen
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Render 3D world
-    if (levelMap && typeof raycaster !== 'undefined') {
+    // Cast rays and render the 3D world
+    if (typeof raycaster !== 'undefined') {
       const strips = raycaster.castRays(player, levelMap, canvas.width, canvas.height);
       raycaster.renderWalls(ctx, strips, canvas.width, canvas.height);
     }
 
-    // Mini-map overlay
-    if (levelMap) {
-      drawMiniMap();
-    }
-
-    // HUD
+    // Update + draw FPS and HUD
     updateFps(delta);
     drawHud();
 
     requestAnimationFrame(gameLoop);
   }
 
-  // ── Boot: Load Level ─────────────────────────────────────────
-  /**
-   * Initialize the game by loading the first level.
-   * Tries to fetch the JSON file; falls back to embedded default
-   * if the fetch fails (e.g. when opening index.html directly
-   * without a web server).
-   */
-  async function boot() {
-    if (typeof Level === 'undefined') {
-      console.error('Level module not loaded — using raycaster TEST_LEVEL fallback');
-      levelMap = (typeof raycaster !== 'undefined') ? raycaster.TEST_LEVEL : null;
-      mapHeight = levelMap ? levelMap.length : 0;
-      mapWidth  = levelMap && levelMap[0] ? levelMap[0].length : 0;
-      player.x = mapWidth / 2;
-      player.y = mapHeight / 2;
-      player.angle = 0;
-      hintEl.style.display = 'block';
-      requestAnimationFrame(gameLoop);
-      return;
-    }
+  // Show hint on start
+  hintEl.style.display = 'block';
 
-    try {
-      level = await Level.loadFromUrl('levels/e1m1.json');
-    } catch (err) {
-      console.warn('Failed to load levels/e1m1.json, using fallback:', err.message);
-      level = Level.loadDefault();
-    }
-
-    levelMap = level.grid;
-    mapWidth = level.width;
-    mapHeight = level.height;
-    player.x = level.spawn.x;
-    player.y = level.spawn.y;
-    player.angle = level.spawn.angle || 0;
-
-    // Sync raycaster wall colors with the level's wall types
-    if (typeof raycaster !== 'undefined' && raycaster.setWallColors) {
-      raycaster.setWallColors(level.wallTypes);
-    }
-
-    console.log('Level loaded: ' + level.name + ' (' + mapWidth + 'x' + mapHeight + ')');
-    hintEl.style.display = 'block';
-    requestAnimationFrame(gameLoop);
-  }
-
-  boot();
+  requestAnimationFrame(gameLoop);
 })();

@@ -23,25 +23,24 @@
       cursor: crosshair;
     }
     #pointerLockHint {
-      position: fixed;
+      position: absolute;
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      color: #FFAA00;
-      font-family: monospace;
-      font-size: 18px;
+      font: 18px monospace;
+      color: #00FF00;
       text-align: center;
       pointer-events: none;
       z-index: 10;
+      text-shadow: 0 0 8px rgba(0, 255, 0, 0.6);
       display: none;
     }
   </style>
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
-  <div id="pointerLockHint">Click to capture mouse · WASD to move · ESC to release</div>
+  <div id="pointerLockHint">Click to capture mouse · ESC to release</div>
   <script src="raycaster.js"></script>
-  <script src="level.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
