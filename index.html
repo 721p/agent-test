@@ -5,42 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DOOM — Browser Edition</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    html, body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
-    }
-    #gameCanvas {
-      display: block;
-      width: 100vw;
-      height: 100vh;
-      cursor: crosshair;
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #gameCanvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
     #pointerLockHint {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font: 18px monospace;
-      color: #00FF00;
-      text-align: center;
-      pointer-events: none;
-      z-index: 10;
-      text-shadow: 0 0 8px rgba(0, 255, 0, 0.6);
-      display: none;
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      font: 18px monospace; color: #00FF00; text-align: center;
+      pointer-events: none; z-index: 10; text-shadow: 0 0 8px rgba(0,255,0,0.6); display: none;
     }
   </style>
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
-  <div id="pointerLockHint">Click to capture mouse · ESC to release</div>
+  <div id="pointerLockHint">Click to capture mouse · ESC to release · Click to fire · 1/2 switch weapons</div>
   <script src="raycaster.js"></script>
+  <script src="weapons.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
