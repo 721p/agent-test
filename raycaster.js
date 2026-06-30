@@ -13,9 +13,14 @@ const raycaster = (() => {
   'use strict';
 
   // ── Constants ───────────────────────────────────────────
-  const FOV = Math.PI / 3;          // 60° field of view
+  let FOV = Math.PI / 3;          // 60° field of view (mutable via setFov)
   const MAX_DEPTH = 20;             // maximum ray distance (grid units)
-  const HALF_FOV = FOV / 2;
+  let HALF_FOV = FOV / 2;
+
+  function setFov(radians) {
+    FOV = radians;
+    HALF_FOV = FOV / 2;
+  }
   const FOG_MAX_DIST = 16;          // Distance at which fog is fully opaque (black)
 
   let WALL_COLORS = {
@@ -293,12 +298,13 @@ const raycaster = (() => {
   ];
 
   return {
-    FOV,
+    get FOV() { return FOV; },
     MAX_DEPTH,
     TEST_LEVEL,
     castRays,
     renderWalls,
     setWallColors,
+    setFov,
   };
 })();
 
