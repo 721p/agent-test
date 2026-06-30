@@ -18,7 +18,7 @@
  *   Weapons.switchTo(state, n) -> switch to weapon slot n (1=pistol, 2=shotgun)
  *   Weapons.drawSprite(ctx, state, w, h)  -> render weapon sprite at bottom
  *   Weapons.drawMuzzleFlash(ctx, state, w, h) -> render muzzle flash overlay
- *   Weapons.raycastHit(player, angle, levelMap) -> { x, y, dist, wallType } | null
+ *   Weapons.raycastHit(player, angle, levelMap, maxDist, enemies) -> { x, y, dist, wallType, enemy? } | null
  *   Weapons.getAmmoInfo(state) -> { name, ammo, max, slot }
  *
  * Vanilla JS (ES6+), no build step, no frameworks.
@@ -84,10 +84,13 @@ var Weapons = (function () {
     return { weapon: state.current, pellets: def.pellets, spread: def.spread, damage: def.damage };
   }
 
-  function raycastHit(player, angle, levelMap, maxDist) {
+  function raycastHit(player, angle, levelMap, maxDist, enemies) {
     maxDist = maxDist || 20;
-    var mapH = levelMap.length, mapW = mapH > 0 ? levelMap[0].length : 0;
     var rayDirX = Math.cos(angle), rayDirY = Math.sin(angle);
+
+    // ── DDA wall hit (existing logic) ──
+    var wallHit = null;
+    var mapH = levelMap.length, mapW = mapH > 0 ? levelMap[0].length : 0;
     var mapX = Math.floor(player.x), mapY = Math.floor(player.y);
     var deltaDistX = Math.abs(1 / (rayDirX || 1e-30)), deltaDistY = Math.abs(1 / (rayDirY || 1e-30));
     var stepX, stepY, sideDistX, sideDistY;
@@ -98,14 +101,41 @@ var Weapons = (function () {
     for (var i = 0; i < maxDist * 2; i++) {
       if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; }
       else { sideDistY += deltaDistY; mapY += stepY; }
-      if (mapX < 0 || mapX >= mapW || mapY < 0 || mapY >= mapH) return null;
+      if (mapX < 0 || mapX >= mapW || mapY < 0 || mapY >= mapH) break;
       var cell = levelMap[mapY][mapX];
       if (cell > 0) {
         var dist = sideDistX < sideDistY ? (sideDistX - deltaDistX) : (sideDistY - deltaDistY);
-        return { x: player.x + rayDirX * dist, y: player.y + rayDirY * dist, dist: dist, wallType: cell };
+        wallHit = { x: player.x + rayDirX * dist, y: player.y + rayDirY * dist, dist: dist, wallType: cell };
+        break;
       }
     }
-    return null;
+
+    // ── Enemy hit detection (ray-circle intersection) ──
+    if (!enemies || !enemies.enemies || enemies.enemies.length === 0) return wallHit;
+    var closestEnemyHit = null;
+    for (var e = 0; e < enemies.enemies.length; e++) {
+      var enemy = enemies.enemies[e];
+      if (enemy.state === 4) continue; // skip DEAD
+      var ex = enemy.x - player.x, ey = enemy.y - player.y;
+      var radius = enemy.def.radius + 0.2;
+      // Project enemy position onto ray direction
+      var t = ex * rayDirX + ey * rayDirY;
+      if (t < 0) continue; // behind player
+      if (wallHit && t > wallHit.dist + radius) continue; // well beyond wall
+      // Perpendicular distance from enemy center to ray
+      var perpDist = Math.abs(ex * rayDirY - ey * rayDirX);
+      if (perpDist >= radius) continue; // ray misses enemy
+      // Closest intersection distance along the ray
+      var hitDist = t - Math.sqrt(radius * radius - perpDist * perpDist);
+      if (hitDist < 0) hitDist = 0;
+      if (hitDist > maxDist) continue;
+      if (wallHit && hitDist >= wallHit.dist) continue; // wall is closer
+      if (!closestEnemyHit || hitDist < closestEnemyHit.dist) {
+        closestEnemyHit = { x: player.x + rayDirX * hitDist, y: player.y + rayDirY * hitDist, dist: hitDist, wallType: 0, enemy: enemy };
+      }
+    }
+    if (closestEnemyHit) return closestEnemyHit;
+    return wallHit;
   }
 
   function drawSprite(ctx, state, w, h) {
