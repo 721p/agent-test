@@ -67,6 +67,8 @@ const Level = (() => {
     }
 
     const spawn = json.spawn || { x: width / 2, y: height / 2, angle: 0 };
+    const enemies = json.enemies || null;
+    const pickups = Array.isArray(json.pickups) ? json.pickups : [];
 
     return {
       name: json.name || 'Untitled Level',
@@ -75,6 +77,8 @@ const Level = (() => {
       grid: json.grid,
       spawn,
       wallTypes,
+      enemies,
+      pickups,
 
       /**
        * Get the wall type id at grid coordinates (0 = empty, 1+ = wall).
