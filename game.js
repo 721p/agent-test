@@ -238,6 +238,9 @@
     if (weapons && e.code === 'Digit2') Weapons.switchTo(weapons, 2);
     if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
 
+    // Toggle mute with M key
+    if (e.code === 'KeyM') toggleMute();
+
     // Restart on death
     if (playerHealth && playerHealth.dead && (e.code === 'Space' || e.code === 'Enter')) {
       resetGame();
@@ -252,6 +255,7 @@
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
   canvas.addEventListener('click', () => {
+    initSound(); // Initialize audio on first user gesture (autoplay policy)
     if (gameState === 'victory') {
       currentLevelIndex = 0;
       performLevelSwitch(0);
@@ -271,6 +275,7 @@
   });
   document.addEventListener('mousemove', (e) => { if (pointerLocked) mouseAccumX += e.movementX; });
   canvas.addEventListener('mousedown', (e) => {
+    initSound(); // Ensure audio is ready on any click
     if (gameState !== 'playing') return;
     if (playerHealth && playerHealth.dead) { resetGame(); return; }
     if (pointerLocked && e.button === 0 && weapons) handleFire();
@@ -280,12 +285,37 @@
     if (playerHealth && playerHealth.dead) return;
     if (gameState !== 'playing') return;
     const result = Weapons.tryFire(weapons);
-    if (!result) return;
+    if (!result) {
+      // No ammo — dry fire click
+      if (typeof Sound !== 'undefined') Sound.playNoAmmo();
+      return;
+    }
+    // Play weapon fire sound
+    if (typeof Sound !== 'undefined') {
+      if (result.weapon === 'shotgun') Sound.playShotgun();
+      else Sound.playPistol();
+    }
+    let didHit = false;
     for (let p = 0; p < result.pellets; p++) {
       const offset = result.spread > 0 ? (Math.random()-0.5)*2*result.spread : 0;
       const hit = Weapons.raycastHit(player, player.angle + offset, levelMap);
       if (hit && enemySystem) {
-        Enemies.tryHit(enemySystem, hit.x, hit.y, result.damage);
+        const hitSomething = Enemies.tryHit(enemySystem, hit.x, hit.y, result.damage);
+        if (hitSomething) {
+          didHit = true;
+          // Check if enemy died from this hit
+          // (tryHit returns true if it hit an enemy, we play hit sound)
+          if (typeof Sound !== 'undefined') Sound.playEnemyHit();
+        }
+      }
+    }
+    // If we killed an enemy, play death sound (check after all pellets)
+    if (didHit && enemySystem && typeof Enemies !== 'undefined' && typeof Sound !== 'undefined') {
+      for (let e of enemySystem.enemies) {
+        if (e.state === 4 && e.deathTimer < 0.1) { // STATE.DEAD = 4, just died
+          Sound.playEnemyDeath();
+          break;
+        }
       }
     }
   }
@@ -322,6 +352,14 @@
       dx/=len; dy/=len;
       let speed = Math.abs(dx*-sin+dy*cos) > Math.abs(dx*cos+dy*sin) ? STRAFE_SPEED : MOVE_SPEED;
       tryMove(player.x+dx*speed*delta, player.y+dy*speed*delta);
+      // Footstep sound
+      footstepAccum += delta;
+      if (footstepAccum >= FOOTSTEP_INTERVAL) {
+        footstepAccum = 0;
+        if (typeof Sound !== 'undefined') Sound.playFootstep();
+      }
+    } else {
+      footstepAccum = FOOTSTEP_INTERVAL * 0.8; // near-ready so first step is quick
     }
     if (keys['ArrowLeft']||keys['KeyQ']) player.angle -= TURN_SPEED*delta;
     if (keys['ArrowRight']||keys['KeyE']) player.angle += TURN_SPEED*delta;
@@ -337,8 +375,10 @@
           maxUnlockedLevel = nextLvl;
           try { localStorage.setItem('doom_max_level', String(maxUnlockedLevel)); } catch (e) {}
         }
+        if (typeof Sound !== 'undefined') Sound.playLevelTransition();
         startLevelTransition(nextLvl);
       } else {
+        if (typeof Sound !== 'undefined') Sound.playVictory();
         showVictoryScreen();
       }
     }
@@ -409,7 +449,7 @@
       ctx.fillStyle='#FFAA00'; ctx.fillText('Click canvas to capture mouse', 10, 46);
     }
     else if (!(playerHealth && playerHealth.dead) && gameState === 'playing') {
-      ctx.fillStyle='#888'; ctx.fillText('Mouse captured (ESC) \u00B7 Click to fire \u00B7 1/2 switch weapons', 10, 46);
+      ctx.fillStyle='#888'; ctx.fillText('Mouse captured (ESC) · Click to fire · 1/2 switch weapons · M mute', 10, 46);
     }
     if (weapons) {
       const info = Weapons.getAmmoInfo(weapons);
@@ -427,6 +467,14 @@
     // Health HUD
     if (playerHealth && typeof Health !== 'undefined') {
       Health.drawHealthHud(ctx, playerHealth, canvas.width, canvas.height);
+    }
+
+    // Sound mute indicator
+    if (manuallyMuted) {
+      ctx.save();
+      ctx.font = '12px monospace'; ctx.fillStyle = '#FF6600'; ctx.textAlign = 'right';
+      ctx.fillText('MUTED [M]', canvas.width - 10, 46);
+      ctx.restore();
     }
 
     // Enemy count indicator
@@ -511,22 +559,89 @@
     lastTime = now;
 
     if (gameState === 'playing') {
+      // Skip updates when tab is hidden (performance + avoid huge delta)
+      if (tabHidden) {
+        // Still render, just don't update
+      } else {
+      // Track pickup collection for sound
+      let pickupsBefore = pickups.map(p => p.collected);
+
       updatePlayer(delta);
       if (weapons) Weapons.update(weapons, delta);
       if (playerHealth && typeof Health !== 'undefined') {
         Health.updateFlash(playerHealth, delta);
         Health.updatePickups(pickups, player, weapons, playerHealth, delta);
+
+        // Play pickup sound when a pickup is collected
+        if (typeof Sound !== 'undefined') {
+          for (let i = 0; i < pickupsBefore.length && i < pickups.length; i++) {
+            if (!pickupsBefore[i] && pickups[i].collected) {
+              Sound.playPickup();
+              break;
+            }
+          }
+        }
       }
 
       // Update enemies
       if (enemySystem && typeof Enemies !== 'undefined') {
+        // Track enemy state changes for alert sounds
+        const enemiesBefore = enemySystem.enemies.map(e => e.state);
+        // Check for new fireball projectiles before update
+        const projCountBefore = enemySystem.projectiles.length;
+
         Enemies.update(enemySystem, delta, player, levelMap);
+
+        // Play alert sound when enemy transitions to CHASE (state 2)
+        if (typeof Sound !== 'undefined') {
+          for (let i = 0; i < enemiesBefore.length && i < enemySystem.enemies.length; i++) {
+            if (enemiesBefore[i] !== 2 && enemySystem.enemies[i].state === 2) {
+              Sound.playAlert();
+              break;
+            }
+          }
+          // Play fireball sound when new projectile spawned
+          if (enemySystem.projectiles.length > projCountBefore) {
+            Sound.playFireball();
+          }
+        }
+
         // Apply enemy damage to player
         if (enemySystem.playerDamage > 0 && playerHealth && typeof Health !== 'undefined') {
           Health.takeDamage(playerHealth, enemySystem.playerDamage);
           enemySystem.playerDamage = 0;
+          if (typeof Sound !== 'undefined') Sound.playDamage();
+        }
+
+        // Player death sound
+        if (playerHealth && playerHealth.dead && typeof Sound !== 'undefined') {
+          // Play death sound once when transitioning to dead
+          if (!playerHealth._deathSoundPlayed) {
+            Sound.playDeath();
+            playerHealth._deathSoundPlayed = true;
+          }
+        } else if (playerHealth) {
+          playerHealth._deathSoundPlayed = false;
+        }
+
+        // Periodic enemy growls when enemies are alive and near
+        growlAccum += delta;
+        if (growlAccum >= GROWL_INTERVAL && typeof Sound !== 'undefined') {
+          growlAccum = 0;
+          const alive = Enemies.getAliveCount(enemySystem);
+          if (alive > 0) {
+            // Only growl if an enemy is within hearing range
+            let nearest = Infinity;
+            for (let e of enemySystem.enemies) {
+              if (e.state === 4) continue;
+              const d = Math.hypot(e.x - player.x, e.y - player.y);
+              if (d < nearest) nearest = d;
+            }
+            if (nearest < 10) Sound.playGrowl();
+          }
         }
       }
+      } // end if (!tabHidden)
     } else if (gameState === 'transitioning') {
       transitionTimer += delta;
       if (transitionTimer >= TRANSITION_DURATION) {
@@ -588,6 +703,43 @@
     }
 
     requestAnimationFrame(gameLoop);
+  }
+
+  // ── Tab Visibility (pause when tab hidden) ───────────────
+  let tabHidden = false;
+  document.addEventListener('visibilitychange', () => {
+    tabHidden = document.hidden;
+    if (tabHidden) {
+      // Pause game loop updates when tab is hidden
+      // (rendering continues but updates are skipped to save CPU)
+      if (typeof Sound !== 'undefined') Sound.setMuted(true);
+    } else {
+      // Resume when tab is visible again
+      lastTime = performance.now(); // Reset timer to avoid huge delta jump
+      if (typeof Sound !== 'undefined' && !manuallyMuted) Sound.setMuted(false);
+    }
+  });
+
+  // ── Sound System ──────────────────────────────────────────
+  let manuallyMuted = false;
+  let soundInitialized = false;
+  let footstepAccum = 0;
+  const FOOTSTEP_INTERVAL = 0.35; // seconds between footsteps when walking
+  let growlAccum = 0;
+  const GROWL_INTERVAL = 2.5; // seconds between random growls
+  let prevEnemyStates = []; // track state changes for alert sounds
+
+  function initSound() {
+    if (soundInitialized) return;
+    if (typeof Sound !== 'undefined') {
+      Sound.init();
+      soundInitialized = true;
+    }
+  }
+
+  function toggleMute() {
+    manuallyMuted = !manuallyMuted;
+    if (typeof Sound !== 'undefined') Sound.setMuted(manuallyMuted);
   }
 
   // ── Init ───────────────────────────────────────────────
