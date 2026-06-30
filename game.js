@@ -298,7 +298,7 @@
     let didHit = false;
     for (let p = 0; p < result.pellets; p++) {
       const offset = result.spread > 0 ? (Math.random()-0.5)*2*result.spread : 0;
-      const hit = Weapons.raycastHit(player, player.angle + offset, levelMap);
+      const hit = Weapons.raycastHit(player, player.angle + offset, levelMap, 20, enemySystem);
       if (hit && enemySystem) {
         const hitSomething = Enemies.tryHit(enemySystem, hit.x, hit.y, result.damage);
         if (hitSomething) {
