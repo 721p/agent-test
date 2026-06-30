@@ -53,7 +53,7 @@
     { "x": 25.5, "y": 27.5, "type": "imp" }
   ],
   "pickups": [
-    { "x": 5.5, "y": 6.5, "type": "health", "amount": 25 },
+    { "x": 6.5, "y": 7.5, "type": "health", "amount": 25 },
     { "x": 10.5, "y": 10.5, "type": "health", "amount": 25 },
     { "x": 14.5, "y": 14.5, "type": "health", "amount": 25 },
     { "x": 6.5, "y": 13.5, "type": "pistol_ammo", "amount": 12 },
