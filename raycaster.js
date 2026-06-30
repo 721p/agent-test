@@ -17,13 +17,31 @@ const raycaster = (() => {
   const MAX_DEPTH = 20;             // maximum ray distance (grid units)
   const HALF_FOV = FOV / 2;
 
-  // Wall colors by type (r,g,b base + side shading multiplier)
-  const WALL_COLORS = {
+  // Default wall colors by type (r,g,b base + side shading multiplier)
+  // These can be overridden by calling raycaster.setWallColors(types)
+  let WALL_COLORS = {
     1: { base: [180,  60,  60] }, // red brick
     2: { base: [ 60, 180,  60] }, // green slime
     3: { base: [ 60,  60, 180] }, // blue stone
     4: { base: [180, 180,  60] }, // yellow tech
   };
+
+  /**
+   * Override wall colors from a level's wallTypes definition.
+   * @param {Object} types - wallTypes map from Level instance
+   */
+  function setWallColors(types) {
+    if (!types) return;
+    const newColors = {};
+    for (const key of Object.keys(types)) {
+      const id = parseInt(key, 10);
+      const def = types[key];
+      if (def && def.color) {
+        newColors[id] = { base: def.color };
+      }
+    }
+    WALL_COLORS = Object.assign({}, WALL_COLORS, newColors);
+  }
 
   // Side shading multipliers for depth perception
   // N/S walls get full brightness, E/W walls are darker
@@ -229,6 +247,7 @@ const raycaster = (() => {
     TEST_LEVEL,
     castRays,
     renderWalls,
+    setWallColors,
   };
 })();
 
