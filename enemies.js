@@ -236,6 +236,8 @@ var Enemies = (function () {
     while (traveled < dist) {
       if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; traveled = (sideDistX - deltaDistX); }
       else { sideDistY += deltaDistY; mapY += stepY; traveled = (sideDistY - deltaDistY); }
+      // Check if we've reached the target before testing wall collision
+      if (traveled >= dist) return true;
       if (mapX < 0 || mapX >= mapW || mapY < 0 || mapY >= mapH) return false;
       if (levelMap[mapY][mapX] > 0) return false;
     }
