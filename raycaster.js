@@ -40,9 +40,9 @@ const raycaster = (() => {
 
   const SIDE_SHADE = { 'NS': 1.0, 'EW': 0.65 };
 
-  // Texture system: if textures.js is loaded, use it; otherwise fall back to flat
-  const useTextures = (typeof textures !== 'undefined');
-  const TEX_SIZE = useTextures ? textures.TEX_SIZE : 64;
+  // Texture system: check lazily so script load order doesn't matter
+  function hasTextures() { return typeof textures !== 'undefined'; }
+  function getTexSize() { return hasTextures() ? textures.TEX_SIZE : 64; }
 
   // ── castRays ───────────────────────────────────────
   function castRays(player, levelMap, screenWidth, screenHeight) {
@@ -135,13 +135,13 @@ const raycaster = (() => {
       ) || 0;
 
       let texX = 0;
-      if (useTextures) {
+      if (hasTextures()) {
         wallX -= Math.floor(wallX);
-        texX = Math.floor(wallX * TEX_SIZE);
-        if (side === 'EW' && rayDirX > 0) texX = TEX_SIZE - texX - 1;
-        if (side === 'NS' && rayDirY < 0) texX = TEX_SIZE - texX - 1;
+        texX = Math.floor(wallX * getTexSize());
+        if (side === 'EW' && rayDirX > 0) texX = getTexSize() - texX - 1;
+        if (side === 'NS' && rayDirY < 0) texX = getTexSize() - texX - 1;
         if (texX < 0) texX = 0;
-        if (texX >= TEX_SIZE) texX = TEX_SIZE - 1;
+        if (texX >= getTexSize()) texX = getTexSize() - 1;
       }
 
       strips[col] = {
@@ -170,8 +170,8 @@ const raycaster = (() => {
     const imgData = ctx.createImageData(screenWidth, screenHeight);
     const buf = imgData.data;
 
-    const floorTex = useTextures ? textures.getFloor() : null;
-    const ceilTex = useTextures ? textures.getCeiling() : null;
+    const floorTex = hasTextures() ? textures.getFloor() : null;
+    const ceilTex = hasTextures() ? textures.getCeiling() : null;
 
     // ── Render floor and ceiling via floor casting ─────────────
     if (wallStrips.length > 0) {
@@ -193,9 +193,9 @@ const raycaster = (() => {
           const floorY = 0.5 + rowDist * (leftDirY + t * (rightDirY - leftDirY));
 
           if (floorTex) {
-            const tx = (Math.floor(floorX * TEX_SIZE) % TEX_SIZE + TEX_SIZE) % TEX_SIZE;
-            const ty = (Math.floor(floorY * TEX_SIZE) % TEX_SIZE + TEX_SIZE) % TEX_SIZE;
-            const ti = (ty * TEX_SIZE + tx) * 4;
+            const tx = (Math.floor(floorX * getTexSize()) % getTexSize() + getTexSize()) % getTexSize();
+            const ty = (Math.floor(floorY * getTexSize()) % getTexSize() + getTexSize()) % getTexSize();
+            const ti = (ty * getTexSize() + tx) * 4;
             const fi = (y * screenWidth + x) * 4;
             buf[fi]     = floorTex[ti] * f;
             buf[fi + 1] = floorTex[ti + 1] * f;
@@ -210,9 +210,9 @@ const raycaster = (() => {
           const cy = horizon - (y - horizon);
           if (cy >= 0) {
             if (ceilTex) {
-              const tx = (Math.floor(floorX * TEX_SIZE) % TEX_SIZE + TEX_SIZE) % TEX_SIZE;
-              const ty = (Math.floor(floorY * TEX_SIZE) % TEX_SIZE + TEX_SIZE) % TEX_SIZE;
-              const ti = (ty * TEX_SIZE + tx) * 4;
+              const tx = (Math.floor(floorX * getTexSize()) % getTexSize() + getTexSize()) % getTexSize();
+              const ty = (Math.floor(floorY * getTexSize()) % getTexSize() + getTexSize()) % getTexSize();
+              const ti = (ty * getTexSize() + tx) * 4;
               const ci = (cy * screenWidth + x) * 4;
               buf[ci]     = ceilTex[ti] * f;
               buf[ci + 1] = ceilTex[ti + 1] * f;
@@ -241,15 +241,15 @@ const raycaster = (() => {
       const shade = SIDE_SHADE[strip.side] || 1.0;
       const f = fogFactor(strip.distance);
 
-      if (useTextures) {
+      if (hasTextures()) {
         const tex = textures.get(strip.wallType);
         const texX = strip.texX;
         for (let py = 0; py < wallH; py++) {
-          let texY = Math.floor((py / strip.wallHeight) * TEX_SIZE);
+          let texY = Math.floor((py / strip.wallHeight) * getTexSize());
           if (texY < 0) texY = 0;
-          if (texY >= TEX_SIZE) texY = TEX_SIZE - 1;
+          if (texY >= getTexSize()) texY = getTexSize() - 1;
 
-          const ti = (texY * TEX_SIZE + texX) * 4;
+          const ti = (texY * getTexSize() + texX) * 4;
           const fi = ((wallTop + py) * screenWidth + stripX) * 4;
           buf[fi]     = tex[ti] * shade * f;
           buf[fi + 1] = tex[ti + 1] * shade * f;
