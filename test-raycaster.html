@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Raycaster Test — Issue #2</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #gameCanvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+    #info {
+      position: absolute; top: 10px; left: 10px;
+      font: 14px monospace; color: #00FF00;
+      pointer-events: none; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">Raycaster Test — WASD/Arrows to move, Q/E to turn</div>
+  <canvas id="gameCanvas"></canvas>
+  <script src="raycaster.js"></script>
+  <script>
+    (() => {
+      'use strict';
+
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+      const infoEl = document.getElementById('info');
+
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      // Player state
+      const player = {
+        x: 8.0,   // center of the 16×16 grid
+        y: 8.0,
+        angle: 0,  // facing east
+      };
+
+      const FOV = Math.PI / 3;
+      const levelMap = raycaster.TEST_LEVEL;
+      const moveSpeed = 3.0;   // grid units per second
+      const turnSpeed = 2.0;   // radians per second
+
+      // Input handling
+      const keys = {};
+      window.addEventListener('keydown', e => { keys[e.code] = true; });
+      window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+      function updatePlayer(delta) {
+        const cos = Math.cos(player.angle);
+        const sin = Math.sin(player.angle);
+
+        let dx = 0, dy = 0;
+
+        if (keys['KeyW'] || keys['ArrowUp'])    { dx += cos; dy += sin; }
+        if (keys['KeyS'] || keys['ArrowDown'])  { dx -= cos; dy -= sin; }
+        if (keys['KeyA'])                        { dx += sin; dy -= cos; }
+        if (keys['KeyD'])                        { dx -= sin; dy += cos; }
+
+        if (keys['ArrowLeft'] || keys['KeyQ'])  { player.angle -= turnSpeed * delta; }
+        if (keys['ArrowRight'] || keys['KeyE']) { player.angle += turnSpeed * delta; }
+
+        // Normalize angle
+        if (player.angle < 0) player.angle += Math.PI * 2;
+        if (player.angle >= Math.PI * 2) player.angle -= Math.PI * 2;
+
+        // Collision: try move, check wall
+        const newX = player.x + dx * moveSpeed * delta;
+        const newY = player.y + dy * moveSpeed * delta;
+        const margin = 0.2;
+
+        if (levelMap[Math.floor(player.y)][Math.floor(newX + (dx > 0 ? margin : -margin))] === 0) {
+          player.x = newX;
+        }
+        if (levelMap[Math.floor(newY + (dy > 0 ? margin : -margin))][Math.floor(player.x)] === 0) {
+          player.y = newY;
+        }
+      }
+
+      // FPS counter
+      let lastTime = performance.now();
+      let fps = 0, frames = 0, fpsAcc = 0;
+
+      function loop(now) {
+        const delta = (now - lastTime) / 1000;
+        lastTime = now;
+
+        updatePlayer(delta);
+
+        // Clear
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Cast rays and render walls
+        const strips = raycaster.castRays(player, levelMap, canvas.width, canvas.height);
+        raycaster.renderWalls(ctx, strips, canvas.width, canvas.height);
+
+        // FPS
+        frames++;
+        fpsAcc += delta;
+        if (fpsAcc >= 1) {
+          fps = Math.round(frames / fpsAcc);
+          frames = 0;
+          fpsAcc = 0;
+        }
+        ctx.font = '14px monospace';
+        ctx.fillStyle = '#00FF00';
+        ctx.fillText(`FPS: ${fps}  Player: (${player.x.toFixed(1)}, ${player.y.toFixed(1)}) Angle: ${(player.angle * 180 / Math.PI).toFixed(0)}°`, 10, 30);
+
+        requestAnimationFrame(loop);
+      }
+
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>
