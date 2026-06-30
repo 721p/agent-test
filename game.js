@@ -595,7 +595,7 @@
     }
 
     // Enemy count indicator
-    if (enemySystem && typeof Enemies !== 'undefined' && gameState === 'playing') {
+    if (enemySystem && typeof Enemies !== 'undefined' && gameState() === 'playing') {
       const alive = Enemies.getAliveCount(enemySystem);
       ctx.save();
       ctx.font = '14px monospace'; ctx.fillStyle = '#FF6644'; ctx.textAlign = 'center';
