@@ -87,7 +87,7 @@
       let fps = 0, frames = 0, fpsAcc = 0;
 
       function loop(now) {
-        const delta = (now - lastTime) / 1000;
+        const delta = Math.min((now - lastTime) / 1000, 0.1);
         lastTime = now;
 
         updatePlayer(delta);
